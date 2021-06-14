@@ -33,3 +33,20 @@ func (EndpointFactory) NewUnassociatedEndpoint(stack *stack.Stack, netProto tcpi
 func (EndpointFactory) NewPacketEndpoint(stack *stack.Stack, cooked bool, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, tcpip.Error) {
 	return packet.NewEndpoint(stack, cooked, netProto, waiterQueue)
 }
+
+// CreateOnlyFactory implements stack.RawFactory. It allows creation of raw
+// sockets that disallow reading, writing, binding, etc. Such sockets can be
+// used to get and set iptables rules without allowing applications to read and
+// write raw packets.
+type CreateOnlyFactory struct{}
+
+// NewUnassociatedEndpoint implements stack.RawFactory.NewUnassociatedEndpoint.
+func (CreateOnlyFactory) NewUnassociatedEndpoint(stk *stack.Stack, _ tcpip.NetworkProtocolNumber, _ tcpip.TransportProtocolNumber, _ *waiter.Queue) (tcpip.Endpoint, tcpip.Error) {
+	return newCreateOnlyEndpoint(stk), nil
+}
+
+// NewPacketEndpoint implements stack.RawFactory.NewPacketEndpoint.
+func (CreateOnlyFactory) NewPacketEndpoint(stack *stack.Stack, cooked bool, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, tcpip.Error) {
+	// This isn't needed by anything, so it isn't implemented.
+	return nil, &tcpip.ErrNotPermitted{}
+}

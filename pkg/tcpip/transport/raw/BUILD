@@ -18,6 +18,7 @@ go_template_instance(
 go_library(
     name = "raw",
     srcs = [
+        "createonlyendpoint.go",
         "endpoint.go",
         "endpoint_state.go",
         "protocol.go",
