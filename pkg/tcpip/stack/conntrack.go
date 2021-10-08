@@ -52,8 +52,7 @@ type manipType int
 
 const (
 	manipNone manipType = iota
-	manipSource
-	manipDestination
+	manipDone
 )
 
 // tuple holds a connection's identifying and manipulating data in one
@@ -124,10 +123,14 @@ type conn struct {
 	//
 	// +checklocks:mu
 	finalized bool
-	// manip indicates if the packet should be manipulated.
+	// sourceManip indicates the packet's source manipulation.
 	//
 	// +checklocks:mu
-	manip manipType
+	sourceManip manipType
+	// destinationManip indicates the packet's destination manipulation.
+	//
+	// +checklocks:mu
+	destinationManip manipType
 	// tcb is TCB control block. It is used to keep track of states
 	// of tcp connection.
 	//
@@ -283,11 +286,12 @@ func (ct *ConnTrack) getConnOrMaybeInsertNoop(pkt *PacketBuffer) *tuple {
 	// This is the first packet we're seeing for the connection. Create an entry
 	// for this new connection.
 	conn := &conn{
-		ct:       ct,
-		original: tuple{tupleID: tid, direction: dirOriginal},
-		reply:    tuple{tupleID: tid.reply(), direction: dirReply},
-		manip:    manipNone,
-		lastUsed: now,
+		ct:               ct,
+		original:         tuple{tupleID: tid, direction: dirOriginal},
+		reply:            tuple{tupleID: tid.reply(), direction: dirReply},
+		sourceManip:      manipNone,
+		destinationManip: manipNone,
+		lastUsed:         now,
 	}
 	conn.original.conn = conn
 	conn.reply.conn = conn
@@ -393,9 +397,16 @@ func (cn *conn) performNATIfNoop(port uint16, address tcpip.Address, dnat bool) 
 		return
 	}
 
-	if cn.manip != manipNone {
+	manip := &cn.sourceManip
+	if dnat {
+		manip = &cn.destinationManip
+	}
+
+	if *manip != manipNone {
 		return
 	}
+
+	*manip = manipDone
 
 	cn.reply.mu.Lock()
 	defer cn.reply.mu.Unlock()
@@ -403,15 +414,24 @@ func (cn *conn) performNATIfNoop(port uint16, address tcpip.Address, dnat bool) 
 	if dnat {
 		cn.reply.tupleID.srcAddr = address
 		cn.reply.tupleID.srcPort = port
-		cn.manip = manipDestination
 	} else {
 		cn.reply.tupleID.dstAddr = address
 		cn.reply.tupleID.dstPort = port
-		cn.manip = manipSource
 	}
 }
 
 func (cn *conn) handlePacket(pkt *PacketBuffer, hook Hook, r *Route) {
+	dnat := false
+	switch hook {
+	case Prerouting, Output:
+		dnat = true
+	case Input, Postrouting:
+	case Forward:
+		panic("should not handle packet in the forwarding hook")
+	default:
+		panic(fmt.Sprintf("unrecognized hook = %d", hook))
+	}
+
 	if pkt.NatDone {
 		return
 	}
@@ -421,55 +441,55 @@ func (cn *conn) handlePacket(pkt *PacketBuffer, hook Hook, r *Route) {
 		return
 	}
 
-	netHeader := pkt.Network()
-
 	// TODO(gvisor.dev/issue/5748): TCP checksums on inbound packets should be
 	// validated if checksum offloading is off. It may require IP defrag if the
 	// packets are fragmented.
 
-	var newAddr tcpip.Address
-	var newPort uint16
-
-	updateSRCFields := false
-
 	dir := pkt.tuple.direction
+	tid, performManip := func() (tupleID, bool) {
+		cn.mu.Lock()
+		defer cn.mu.Unlock()
 
-	cn.mu.Lock()
-	defer cn.mu.Unlock()
+		manip := &cn.sourceManip
+		tuple := &cn.reply
+		switch dir {
+		case dirOriginal:
+			if dnat {
+				manip = &cn.destinationManip
+			}
+		case dirReply:
+			tuple = &cn.original
 
-	switch hook {
-	case Prerouting, Output:
-		if cn.manip == manipDestination && dir == dirOriginal {
-			id := cn.reply.id()
-			newPort = id.srcPort
-			newAddr = id.srcAddr
-			pkt.NatDone = true
-		} else if cn.manip == manipSource && dir == dirReply {
-			id := cn.original.id()
-			newPort = id.srcPort
-			newAddr = id.srcAddr
-			pkt.NatDone = true
+			if !dnat {
+				manip = &cn.destinationManip
+			}
 		}
-	case Input, Postrouting:
-		if cn.manip == manipSource && dir == dirOriginal {
-			id := cn.reply.id()
-			newPort = id.dstPort
-			newAddr = id.dstAddr
-			updateSRCFields = true
+
+		switch *manip {
+		case manipNone:
+			return tupleID{}, false
+		case manipDone:
 			pkt.NatDone = true
-		} else if cn.manip == manipDestination && dir == dirReply {
-			id := cn.original.id()
-			newPort = id.dstPort
-			newAddr = id.dstAddr
-			updateSRCFields = true
-			pkt.NatDone = true
+		default:
+			panic(fmt.Sprintf("unrecognized %[1]T variant = %[1]T", *manip))
 		}
-	default:
-		panic(fmt.Sprintf("unrecognized hook = %s", hook))
+
+		// Mark the connection as having been used recently so it isn't reaped.
+		cn.lastUsed = time.Now()
+		// Update connection state.
+		cn.updateLocked(pkt, dir)
+
+		return tuple.id(), true
+	}()
+	if !performManip {
+		return
 	}
 
-	if !pkt.NatDone {
-		return
+	newPort := tid.dstPort
+	newAddr := tid.dstAddr
+	if dnat {
+		newPort = tid.srcPort
+		newAddr = tid.srcAddr
 	}
 
 	fullChecksum := false
@@ -494,19 +514,14 @@ func (cn *conn) handlePacket(pkt *PacketBuffer, hook Hook, r *Route) {
 	}
 
 	rewritePacket(
-		netHeader,
+		pkt.Network(),
 		transportHeader,
-		updateSRCFields,
+		!dnat,
 		fullChecksum,
 		updatePseudoHeader,
 		newPort,
 		newAddr,
 	)
-
-	// Mark the connection as having been used recently so it isn't reaped.
-	cn.lastUsed = time.Now()
-	// Update connection state.
-	cn.updateLocked(pkt, dir)
 }
 
 // bucket gets the conntrack bucket for a tupleID.
@@ -651,7 +666,7 @@ func (ct *ConnTrack) originalDst(epID TransportEndpointID, netProto tcpip.Networ
 
 	t.conn.mu.RLock()
 	defer t.conn.mu.RUnlock()
-	if t.conn.manip != manipDestination {
+	if t.conn.destinationManip != manipDone {
 		// Unmanipulated destination.
 		return "", 0, &tcpip.ErrInvalidOptionValue{}
 	}
