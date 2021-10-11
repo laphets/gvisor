@@ -439,7 +439,7 @@ func (e *endpoint) WritePacket(r *stack.Route, params stack.NetworkHeaderParams,
 	// We should do this for every packet, rather than only NATted packets, but
 	// removing this check short circuits broadcasts before they are sent out to
 	// other hosts.
-	if pkt.NatDone {
+	if pkt.DNATDone {
 		netHeader := header.IPv4(pkt.NetworkHeader().View())
 		if ep := e.protocol.findEndpointWithAddress(netHeader.DestinationAddress()); ep != nil {
 			// Since we rewrote the packet but it is being routed back to us, we
@@ -1309,15 +1309,22 @@ func (p *protocol) parseAndValidate(pkt *stack.PacketBuffer) (header.IPv4, bool)
 		return nil, false
 	}
 
-	if hasTransportHdr {
-		switch err := p.stack.ParsePacketBufferTransport(transProtoNum, pkt); err {
-		case stack.ParsedOK:
-		case stack.UnknownTransportProtocol, stack.TransportLayerParseError:
-			// The transport layer will handle unknown protocols and transport layer
-			// parsing errors.
-		default:
-			panic(fmt.Sprintf("unexpected error parsing transport header = %d", err))
-		}
+	if !hasTransportHdr {
+		return h, true
+	}
+
+	if transProtoNum == header.ICMPv4ProtocolNumber {
+		_ = parse.ICMPv4(pkt)
+		return h, true
+	}
+
+	switch err := p.stack.ParsePacketBufferTransport(transProtoNum, pkt); err {
+	case stack.ParsedOK:
+	case stack.UnknownTransportProtocol, stack.TransportLayerParseError:
+		// The transport layer will handle unknown protocols and transport layer
+		// parsing errors.
+	default:
+		panic(fmt.Sprintf("unexpected error parsing transport header = %d", err))
 	}
 
 	return h, true
