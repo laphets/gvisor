@@ -240,6 +240,15 @@ func newSocketFile(ctx context.Context, family int, stype linux.SockType, protoc
 
 // Socket implements socket.Provider.Socket.
 func (p *socketProvider) Socket(t *kernel.Task, stypeflags linux.SockType, protocol int) (*fs.File, *syserr.Error) {
+	// Check that we are using the dpdk network stack.
+	stack := t.NetworkContext()
+	if stack == nil {
+		return nil, nil
+	}
+	if _, ok := stack.(*Stack); !ok {
+		return nil, nil
+	}
+	fmt.Println("new socket from dpdk")
 	// Only accept TCP and UDP.
 	stype := stypeflags & linux.SOCK_TYPE_MASK
 	switch stype {
@@ -261,14 +270,8 @@ func (p *socketProvider) Socket(t *kernel.Task, stypeflags linux.SockType, proto
 		return nil, nil
 	}
 
-	// Conservatively ignore all flags specified by the application and add
-	// SOCK_NONBLOCK since socketOperations requires it. Pass a protocol of 0
-	// to simplify the syscall filters, since 0 and IPPROTO_* are equivalent.
-	fd, err := unix.Socket(p.family, int(stype)|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, syserr.FromError(err)
-	}
-	return newSocketFile(t, p.family, stype, protocol, fd, stypeflags&unix.SOCK_NONBLOCK != 0)
+	// TODO: Allocate socket from dpdk side
+	return newSocketFile(t, p.family, stype, protocol, 0, stypeflags&unix.SOCK_NONBLOCK != 0)
 }
 
 // Pair implements socket.Provider.Pair.

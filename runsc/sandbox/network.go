@@ -67,6 +67,8 @@ func setupNetwork(conn *urpc.Client, pid int, conf *config.Config) error {
 		}
 	case config.NetworkHost:
 		// Nothing to do here.
+	case config.NetworkDPDK:
+		// Nothing to do here.
 	default:
 		return fmt.Errorf("invalid network type: %v", conf.Network)
 	}

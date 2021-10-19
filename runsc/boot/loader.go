@@ -1130,7 +1130,8 @@ func newRootNetworkNamespace(conf *config.Config, clock tcpip.Clock, uniqueID st
 			allowPacketEndpointWrite: conf.AllowPacketEndpointWrite,
 		}
 		return inet.NewRootNamespace(s, creator), nil
-
+	case config.NetworkDPDK:
+		return inet.NewRootNamespace(dpdk.NewStack(), nil), nil
 	default:
 		panic(fmt.Sprintf("invalid network configuration: %v", conf.Network))
 	}

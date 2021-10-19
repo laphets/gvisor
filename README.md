@@ -15,7 +15,7 @@ Add the following configs to `/etc/docker/daemon.json` to register `runsc` runti
     "gvisor-dpdk": {
         "path": "/tmp/runsc",
         "runtimeArgs": [
-            "--network=host",
+            "--network=dpdk",
             "--debug-log",
             "/tmp/gvisor/logs/runsc.log.%TEST%.%TIMESTAMP%.%COMMAND%",
             "--net-raw",
