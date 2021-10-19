@@ -313,6 +313,9 @@ const (
 
 	// NetworkNone sets up just loopback using netstack.
 	NetworkNone
+
+	// NetworkDPDK uses DPDK based userspace network stack
+	NetworkDPDK
 )
 
 func networkTypePtr(v NetworkType) *NetworkType {
@@ -328,6 +331,8 @@ func (n *NetworkType) Set(v string) error {
 		*n = NetworkHost
 	case "none":
 		*n = NetworkNone
+	case "dpdk":
+		*n = NetworkDPDK
 	default:
 		return fmt.Errorf("invalid network type %q", v)
 	}
@@ -348,6 +353,8 @@ func (n NetworkType) String() string {
 		return "host"
 	case NetworkNone:
 		return "none"
+	case NetworkDPDK:
+		return "dpdk"
 	}
 	panic(fmt.Sprintf("Invalid network type %d", n))
 }

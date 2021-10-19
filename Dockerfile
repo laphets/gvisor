@@ -6,6 +6,6 @@ RUN apt-get update \
   && ln -s /usr/bin/python3 python \
   && pip3 install --upgrade pip
 
-RUN apt install -y curl netcat bash fish
+RUN apt install -y curl netcat bash fish iproute2 net-tools
 
 WORKDIR /gvsior/socket-test

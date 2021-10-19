@@ -16,6 +16,7 @@
 package tcp
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"time"
@@ -108,6 +109,7 @@ func (*protocol) Number() tcpip.TransportProtocolNumber {
 
 // NewEndpoint creates a new tcp endpoint.
 func (p *protocol) NewEndpoint(netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, tcpip.Error) {
+	fmt.Println("new endpoint for tcp")
 	return newEndpoint(p.stack, p, netProto, waiterQueue), nil
 }
 

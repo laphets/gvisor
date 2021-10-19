@@ -32,6 +32,7 @@ import (
 	"io/ioutil"
 	"math"
 	"reflect"
+	"runtime/debug"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -390,6 +391,7 @@ type socketOpsCommon struct {
 
 // New creates a new endpoint socket.
 func New(t *kernel.Task, family int, skType linux.SockType, protocol int, queue *waiter.Queue, endpoint tcpip.Endpoint) (*fs.File, *syserr.Error) {
+	fmt.Println("new socket")
 	if skType == linux.SOCK_STREAM {
 		endpoint.SocketOptions().SetDelayOption(true)
 	}
@@ -592,6 +594,8 @@ func (s *socketOpsCommon) mapFamily(addr tcpip.FullAddress, family uint16) tcpip
 // Connect implements the linux syscall connect(2) for sockets backed by
 // tpcip.Endpoint.
 func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool) *syserr.Error {
+	fmt.Println("socket connect")
+	fmt.Println(string(debug.Stack()))
 	addr, family, err := socket.AddressAndFamily(sockaddr)
 	if err != nil {
 		return err
@@ -707,6 +711,7 @@ func (s *socketOpsCommon) Bind(_ *kernel.Task, sockaddr []byte) *syserr.Error {
 // Listen implements the linux syscall listen(2) for sockets backed by
 // tcpip.Endpoint.
 func (s *socketOpsCommon) Listen(_ *kernel.Task, backlog int) *syserr.Error {
+	fmt.Println("socket listen")
 	return syserr.TranslateNetstackError(s.Endpoint.Listen(backlog))
 }
 

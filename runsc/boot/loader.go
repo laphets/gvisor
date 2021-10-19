@@ -77,6 +77,7 @@ import (
 	"gvisor.dev/gvisor/runsc/specutils/seccomp"
 
 	// Top-level inet providers.
+	"gvisor.dev/gvisor/pkg/sentry/socket/dpdk"
 	"gvisor.dev/gvisor/pkg/sentry/socket/hostinet"
 	"gvisor.dev/gvisor/pkg/sentry/socket/netstack"
 
@@ -588,6 +589,14 @@ func (l *Loader) run() error {
 		// is configured after the loader is created and before Run() is called.
 		log.Debugf("Configuring host network")
 		s := l.k.RootNetworkNamespace().Stack().(*hostinet.Stack)
+		if err := s.Configure(); err != nil {
+			return err
+		}
+	}
+
+	if l.root.conf.Network == config.NetworkDPDK {
+		fmt.Println("Configuring dpdk network")
+		s := l.k.RootNetworkNamespace().Stack().(*dpdk.Stack)
 		if err := s.Configure(); err != nil {
 			return err
 		}
