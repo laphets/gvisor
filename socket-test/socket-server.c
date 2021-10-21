@@ -25,7 +25,15 @@ void dump_socket_req(socket_req_t* req) {
     char ch[200];
     memset(ch, 0, sizeof(ch));
     memcpy(ch, req->data, req->size);
-    printf("[socket_req] fd: %d, size: %d, op: %d, data: %s\n", req->fd, req->size, req->op, ch);
+    printf("[socket_req] sizeof: %d, fd: %d, size: %d, op: %d, data: %s\n", sizeof(socket_req_t), req->fd, req->size, req->op, ch);
+}
+
+void dump_socket_rsp(socket_rsp_t *rsp)
+{
+    char ch[200];
+    memset(ch, 0, sizeof(ch));
+    memcpy(ch, rsp->data, rsp->size);
+    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: %s\n", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result, ch);
 }
 
 #define SOCK_ADDR "/tmp/gvisor.sock"
@@ -36,7 +44,7 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     int sockfd, ret;
     struct sockaddr_in serv_addr;
     rsp->fd = req->fd;
-    rsp->op = req->fd;
+    rsp->op = req->op;
     switch (req->op)
     {
     case OpCreate:
@@ -46,13 +54,9 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         break;
 
     case OpConnect:
-        serv_addr.sin_family = AF_INET;
-        serv_addr.sin_port = htons(5000);
-        if (ret = inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-            rsp->result = ret;
-            return 1;
-        }
-        ret = connect(socket_fd_map[req->fd], (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+        printf("connect\n");
+        ret = connect(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
+        printf("connect done %d\n", ret);
         rsp->result = ret;
         break;
 
@@ -134,20 +138,23 @@ int main()
 
     socket_req_t req;
     socket_rsp_t rsp;
+    int ret;
     for (;;)
     {
-        int n = recv(client_fd, &req, sizeof(socket_req_t), 0);
-        if (n != sizeof(socket_req_t))
+        if ((ret = recv(client_fd, &req, sizeof(socket_req_t), 0)) != sizeof(socket_req_t))
         {
-            printf("error reading udp request: %d\n", n);
-            close(server_fd);
-            close(client_fd);
+            printf("error reading uds request: %d\n", ret);
             break;
         }
         dump_socket_req(&req);
         memset(&rsp, 0, sizeof(rsp));
         socket_handler(&req, &rsp);
-        send(client_fd, &rsp, sizeof(socket_rsp_t), 0);
+        if ((ret = send(client_fd, &rsp, sizeof(socket_rsp_t), 0)) != sizeof(socket_rsp_t))
+        {
+            printf("error writing uds request: %d\n", ret);
+            break;
+        }
+        dump_socket_rsp(&rsp);
     }
 
     close(server_fd);

@@ -41,8 +41,6 @@ func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool
 		Op:   OpConnect,
 	}
 	copy(req.Data[:], sockaddr)
-	fmt.Printf("%+v\n", req)
-	fmt.Println("Request Connect")
 	_, err := s.client.Request(req)
 	if err != nil {
 		return syserr.ErrAborted

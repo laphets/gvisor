@@ -36,6 +36,7 @@ type SocketReq struct {
 }
 
 const SocketRspDataLen = 121
+
 type SocketRsp struct {
 	Id     int16
 	Size   int16
@@ -63,6 +64,7 @@ func (c *UdsClient) Request(req *SocketReq) (*SocketRsp, error) {
 	if err := binary.Write(&buf, binary.LittleEndian, *req); err != nil {
 		return nil, err
 	}
+	fmt.Printf("send to uds: %+v\n", req)
 	if _, err := c.Conn.Write(buf.Bytes()); err != nil {
 		return nil, err
 	}
@@ -76,6 +78,8 @@ func (c *UdsClient) dispatch() {
 		if err := binary.Read(c.Conn, binary.LittleEndian, rsp); err != nil {
 			fmt.Println("error", err)
 			break
+		} else {
+			fmt.Printf("read from uds: %+v\n", rsp)
 		}
 		if ch, ok := c.chanMap[rsp.Id]; ok {
 			ch <- rsp

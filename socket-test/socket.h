@@ -19,19 +19,19 @@ typedef enum
     OpRecv,
 } socket_op_t;
 
-typedef struct socket_req
+typedef struct __attribute__((__packed__)) socket_req
 {
-    int16_t fd;
-    int16_t size;
+    int16_t fd : 16;
+    int16_t size : 16;
     socket_op_t op : 8;
     char data[123];
 } socket_req_t;
 
-typedef struct socket_rsp
+typedef struct __attribute__((__packed__)) socket_rsp
 {
-    int16_t fd;
-    int16_t size;
-    socket_op_t op;
-    int16_t result;
+    int16_t fd : 16;
+    int16_t size : 16;
+    socket_op_t op : 8;
+    int16_t result : 16;
     char data[121];
 } socket_rsp_t;
