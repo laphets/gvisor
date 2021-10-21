@@ -50,13 +50,21 @@ type Stack struct {
 	tcpSACKEnabled bool
 	netDevFile     *os.File
 	netSNMPFile    *os.File
+	client         *UdsClient
+	idAlloc        int16
 }
 
 // NewStack returns an empty Stack containing no configuration.
 func NewStack() *Stack {
+	client, err := newUdsClient()
+	if err != nil {
+		fmt.Println("error", err)
+	}
 	return &Stack{
 		interfaces:     make(map[int32]inet.Interface),
 		interfaceAddrs: make(map[int32][]inet.InterfaceAddr),
+		client:         client,
+		idAlloc:        0,
 	}
 }
 

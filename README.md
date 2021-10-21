@@ -21,7 +21,8 @@ Add the following configs to `/etc/docker/daemon.json` to register `runsc` runti
             "--net-raw",
             "--debug",
             "--strace",
-            "--log-packets"
+            "--log-packets",
+            "--TESTONLY-unsafe-nonroot",
         ]
     },
     "gvisor": {
@@ -32,7 +33,8 @@ Add the following configs to `/etc/docker/daemon.json` to register `runsc` runti
             "--net-raw",
             "--debug",
             "--strace",
-            "--log-packets"
+            "--log-packets",
+            "--TESTONLY-unsafe-nonroot",
         ]
     },
 }

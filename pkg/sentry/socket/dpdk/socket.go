@@ -8,7 +8,6 @@ import (
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
-	"gvisor.dev/gvisor/pkg/fdnotifier"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/marshal"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
@@ -30,16 +29,26 @@ type socketOpsCommon struct {
 	protocol int            // Read-only.
 	queue    waiter.Queue
 
-	// fd is the host socket fd. It must have O_NONBLOCK, so that operations
-	// will return EWOULDBLOCK instead of blocking on the host. This allows us to
-	// handle blocking behavior independently in the sentry.
-	fd int
+	client *UdsClient
+	id     int16
 }
 
 // Connect implements the connect(2) linux unix.
 func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool) *syserr.Error {
-	fmt.Println("Connect not implemented")
-	return syserr.ErrNotSupported
+	req := &SocketReq{
+		Id:   s.id,
+		Size: int16(len(sockaddr)),
+		Op:   OpConnect,
+	}
+	copy(req.Data[:], sockaddr)
+	fmt.Printf("%+v\n", req)
+	fmt.Println("Request Connect")
+	_, err := s.client.Request(req)
+	if err != nil {
+		return syserr.ErrAborted
+	}
+	fmt.Println("Request Connect Done")
+	return nil
 }
 
 // Accept implements the accept4(2) linux unix.
@@ -221,18 +230,19 @@ type socketOperations struct {
 
 var _ = socket.Socket(&socketOperations{})
 
-func newSocketFile(ctx context.Context, family int, stype linux.SockType, protocol int, fd int, nonblock bool) (*fs.File, *syserr.Error) {
+func newSocketFile(ctx context.Context, family int, stype linux.SockType, protocol int, id int16, client *UdsClient, nonblock bool) (*fs.File, *syserr.Error) {
 	s := &socketOperations{
 		socketOpsCommon: socketOpsCommon{
 			family:   family,
 			stype:    stype,
 			protocol: protocol,
-			fd:       fd,
+			client:   client,
+			id:       id,
 		},
 	}
-	if err := fdnotifier.AddFD(int32(fd), &s.queue); err != nil {
-		return nil, syserr.FromError(err)
-	}
+	// if err := fdnotifier.AddFD(int32(fd), &s.queue); err != nil {
+	// 	return nil, syserr.FromError(err)
+	// }
 	dirent := socket.NewDirent(ctx, socketDevice)
 	defer dirent.DecRef(ctx)
 	return fs.NewFile(ctx, dirent, fs.FileFlags{NonBlocking: nonblock, Read: true, Write: true, NonSeekable: true}, s), nil
@@ -248,6 +258,10 @@ func (p *socketProvider) Socket(t *kernel.Task, stypeflags linux.SockType, proto
 	if _, ok := stack.(*Stack); !ok {
 		return nil, nil
 	}
+	tStack := stack.(*Stack)
+	client := tStack.client
+	tStack.idAlloc += 1
+	id := tStack.idAlloc
 	fmt.Println("new socket from dpdk")
 	// Only accept TCP and UDP.
 	stype := stypeflags & linux.SOCK_TYPE_MASK
@@ -270,8 +284,22 @@ func (p *socketProvider) Socket(t *kernel.Task, stypeflags linux.SockType, proto
 		return nil, nil
 	}
 
-	// TODO: Allocate socket from dpdk side
-	return newSocketFile(t, p.family, stype, protocol, 0, stypeflags&unix.SOCK_NONBLOCK != 0)
+	req := &SocketReq{
+		Id:   id,
+		Size: 0,
+		Op:   OpCreate,
+	}
+	_, err := client.Request(req)
+	if err != nil {
+		return nil, syserr.ErrAborted
+	}
+
+	f, e := newSocketFile(t, p.family, stype, protocol, id, client, stypeflags&unix.SOCK_NONBLOCK != 0)
+	if e != nil {
+		return nil, e
+	}
+
+	return f, nil
 }
 
 // Pair implements socket.Provider.Pair.
