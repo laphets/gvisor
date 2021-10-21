@@ -43,6 +43,8 @@ int16_t socket_fd_map[65536];
 int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     int sockfd, ret;
     struct sockaddr_in serv_addr;
+    struct sockaddr_in sa;
+    int sa_len;
     rsp->fd = req->fd;
     rsp->op = req->op;
     switch (req->op)
@@ -58,6 +60,18 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         ret = connect(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
         printf("connect done %d\n", ret);
         rsp->result = ret;
+        break;
+
+    case OpGetSockName:
+        rsp->result = getsockname(socket_fd_map[req->fd], &sa, &sa_len);
+        memcpy(rsp->data, &sa, sa_len);
+        rsp->size = sa_len;
+        break;
+
+    case OpGetPeerName:
+        rsp->result = getpeername(socket_fd_map[req->fd], &sa, &sa_len);
+        memcpy(rsp->data, &sa, sa_len);
+        rsp->size = sa_len;
         break;
 
     case OpSend:

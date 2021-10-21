@@ -21,6 +21,18 @@ import (
 	"gvisor.dev/gvisor/pkg/waiter"
 )
 
+const (
+	sizeofInt32 = 4
+
+	// sizeofSockaddr is the size in bytes of the largest sockaddr type
+	// supported by this package.
+	sizeofSockaddr = unix.SizeofSockaddrInet6 // sizeof(sockaddr_in6) > sizeof(sockaddr_in)
+
+	// maxControlLen is the maximum size of a control message buffer used in a
+	// recvmsg or sendmsg unix.
+	maxControlLen = 1024
+)
+
 type socketOpsCommon struct {
 	socket.SendReceiveTimeout
 
@@ -91,18 +103,40 @@ func (s *socketOpsCommon) SetSockOpt(t *kernel.Task, level int, name int, opt []
 //
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
-func (s *socketOpsCommon) GetSockName(t *kernel.Task) (addr linux.SockAddr, addrLen uint32, err *syserr.Error) {
-	fmt.Println("GetSockName not implemented")
-	return nil, 0, syserr.ErrNotSupported
+func (s *socketOpsCommon) GetSockName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: 0,
+		Op:   OpGetSockName,
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil {
+		return nil, 0, syserr.ErrAborted
+	}
+	fmt.Println("Request GetSockName Done")
+	addrlen := rsp.Size
+	addr := rsp.Data[:addrlen]
+	return socket.UnmarshalSockAddr(s.family, addr), uint32(addrlen), nil
 }
 
 // GetPeerName implements the getpeername(2) linux unix.
 //
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
-func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (addr linux.SockAddr, addrLen uint32, err *syserr.Error) {
-	fmt.Println("GetPeerName not implemented")
-	return nil, 0, syserr.ErrNotSupported
+func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: 0,
+		Op:   OpGetPeerName,
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil {
+		return nil, 0, syserr.ErrAborted
+	}
+	fmt.Println("Request GetPeerName Done")
+	addrlen := rsp.Size
+	addr := rsp.Data[:addrlen]
+	return socket.UnmarshalSockAddr(s.family, addr), uint32(addrlen), nil
 }
 
 // RecvMsg implements the recvmsg(2) linux unix.
@@ -205,7 +239,13 @@ func (s *socketOpsCommon) Readiness(mask waiter.EventMask) waiter.EventMask {
 
 // Release implements fs.FileOperations.Release.
 func (s *socketOpsCommon) Release(ctx context.Context) {
-	fmt.Println("Release not implemented")
+	req := &SocketReq{
+		Id:   s.id,
+		Size: 0,
+		Op:   OpRelease,
+	}
+	s.client.Request(req)
+	fmt.Println("Request Release Done")
 }
 
 type socketProvider struct {

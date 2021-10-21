@@ -21,6 +21,8 @@ const (
 	OpRelease
 	OpSend
 	OpRecv
+	OpGetSockName
+	OpGetPeerName
 )
 
 // data plane -> shm
