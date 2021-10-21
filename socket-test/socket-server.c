@@ -33,7 +33,11 @@ void dump_socket_rsp(socket_rsp_t *rsp)
     char ch[200];
     memset(ch, 0, sizeof(ch));
     memcpy(ch, rsp->data, rsp->size);
-    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: %s\n", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result, ch);
+    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: ", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result);
+    for (int i = 0; i < rsp->size; i++) {
+        printf("%d ", rsp->data[i]);
+    }
+    printf("\n");
 }
 
 #define SOCK_ADDR "/tmp/gvisor.sock"
@@ -75,6 +79,12 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         break;
 
     case OpSend:
+        rsp->result = send(socket_fd_map[req->fd], req->data, req->size, 0);
+        break;
+
+    case OpRecv:
+        rsp->result = recv(socket_fd_map[req->fd], rsp->data, req->size, 0);
+        rsp->size = rsp->result;
         break;
 
     case OpRelease:

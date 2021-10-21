@@ -150,18 +150,44 @@ func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (linux.SockAddr, uint32, *
 // msgFlags. In that case, the caller should set MSG_CTRUNC appropriately.
 //
 // If err != nil, the recv was not successful.
-func (s *socketOpsCommon) RecvMsg(t *kernel.Task, dst usermem.IOSequence, flags int, haveDeadline bool, deadline ktime.Time, senderRequested bool, controlDataLen uint64) (n int, msgFlags int, senderAddr linux.SockAddr, senderAddrLen uint32, controlMessages socket.ControlMessages, err *syserr.Error) {
-	fmt.Println("RecvMsg not implemented")
-	return 0, 0, nil, 0, socket.ControlMessages{}, syserr.ErrNotSupported
+func (s *socketOpsCommon) RecvMsg(t *kernel.Task, dst usermem.IOSequence, flags int, haveDeadline bool, deadline ktime.Time, senderRequested bool, controlDataLen uint64) (int, int, linux.SockAddr, uint32, socket.ControlMessages, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: int16(dst.NumBytes()),
+		Op:   OpRecv,
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil || rsp.Result < 0 {
+		return 0, 0, nil, 0, socket.ControlMessages{}, syserr.ErrAborted
+	}
+
+	if n, err := dst.CopyOut(t, rsp.Data[:rsp.Size]); err != nil || n != int(rsp.Size) {
+		return 0, 0, nil, 0, socket.ControlMessages{}, syserr.ErrAborted
+	}
+
+	fmt.Println("Request RecvMsg Done")
+	return int(rsp.Size), 0, nil, 0, socket.ControlMessages{}, nil
 }
 
 // SendMsg implements the sendmsg(2) linux unix. SendMsg does not take
 // ownership of the ControlMessage on error.
 //
 // If n > 0, err will either be nil or an error from t.Block.
-func (s *socketOpsCommon) SendMsg(t *kernel.Task, src usermem.IOSequence, to []byte, flags int, haveDeadline bool, deadline ktime.Time, controlMessages socket.ControlMessages) (n int, err *syserr.Error) {
-	fmt.Println("SendMsg not implemented")
-	return 0, syserr.ErrNotSupported
+func (s *socketOpsCommon) SendMsg(t *kernel.Task, src usermem.IOSequence, to []byte, flags int, haveDeadline bool, deadline ktime.Time, controlMessages socket.ControlMessages) (int, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: int16(src.NumBytes()),
+		Op:   OpSend,
+	}
+	if n, err := src.CopyIn(t, req.Data[:]); err != nil || n != int(src.NumBytes()) {
+		return 0, syserr.ErrNotSupported
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil {
+		return 0, syserr.ErrAborted
+	}
+	fmt.Println("Request SendMsg Done")
+	return int(rsp.Result), nil
 }
 
 // SetRecvTimeout sets the timeout (in ns) for recv operations. Zero means

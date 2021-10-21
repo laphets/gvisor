@@ -66,7 +66,7 @@ func (c *UdsClient) Request(req *SocketReq) (*SocketRsp, error) {
 	if err := binary.Write(&buf, binary.LittleEndian, *req); err != nil {
 		return nil, err
 	}
-	fmt.Printf("send to uds: %+v\n", req)
+	// fmt.Printf("send to uds: %+v\n", req)
 	if _, err := c.Conn.Write(buf.Bytes()); err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (c *UdsClient) dispatch() {
 			fmt.Println("error", err)
 			break
 		} else {
-			fmt.Printf("read from uds: %+v\n", rsp)
+			// fmt.Printf("read from uds: %+v\n", rsp)
 		}
 		if ch, ok := c.chanMap[rsp.Id]; ok {
 			ch <- rsp
