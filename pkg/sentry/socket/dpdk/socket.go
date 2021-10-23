@@ -1,7 +1,12 @@
 package dpdk
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/gob"
 	"fmt"
+	"log"
+	"unsafe"
 
 	"gvisor.dev/gvisor/pkg/context"
 
@@ -50,23 +55,98 @@ func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool
 }
 
 // Accept implements the accept4(2) linux unix.
-// Returns fd, real peer address length and error. Real peer address
+// The accept() system call is used with connection-based socket, in our case, type is SOCK_STREAM
+// Returns fd, Real peer address, real peer address length, and error.
 // length is only set if len(peer) > 0.
 func (s *socketOpsCommon) Accept(t *kernel.Task, peerRequested bool, flags int, blocking bool) (int32, linux.SockAddr, uint32, *syserr.Error) {
-	fmt.Println("Accept not implemented")
-	return 0, nil, 0, syserr.ErrNotSupported
+
+	// fmt.Println("Accept not implemented")
+
+	var peerAddr linux.SockAddrInet
+	var peerAddrlen uint32
+
+	// update stack idAlloc
+	stack := t.NetworkContext()
+	if stack == nil {
+		return 0, nil, 0, syserr.ErrAborted
+	}
+	if _, ok := stack.(*Stack); !ok {
+		return 0, nil, 0, syserr.ErrAborted
+	}
+	tStack := stack.(*Stack)
+	tStack.idAlloc += 1
+	id := tStack.idAlloc
+
+	req := &SocketReq{
+		Id:   s.id, // sockfd
+		Size: 0,
+		Op:   OpAccept,
+	}
+
+	binary.LittleEndian.PutUint16(req.Data[:2], uint16(id)) // put id to req.Data
+	rsp, err := s.client.Request(req)                       // receive from SocketRsp
+	if err != nil {
+		return 0, nil, 0, syserr.ErrAborted
+	}
+
+	split_idx := unsafe.Sizeof(linux.SockAddrInet{})
+	// peerAddrlen = binary.LittleEndian.Uint32(rsp.Data[split_idx : split_idx+4])
+	buf := bytes.NewReader(rsp.Data[split_idx : split_idx+4])
+	_ = binary.Read(buf, binary.LittleEndian, &peerAddrlen)
+
+	AddrBuf := bytes.NewBuffer(rsp.Data[:split_idx])
+	dec := gob.NewDecoder(AddrBuf)
+	_ = dec.Decode(&peerAddr)
+
+	// create a new socket
+	// stype is TCP
+	stype := unix.SOCK_STREAM & linux.SOCK_TYPE_MASK
+	_, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
+	if e != nil {
+		return 0, nil, 0, syserr.ErrAborted
+	}
+	fmt.Println("Request Accept Done")
+	return int32(id), peerAddr, peerAddrlen, nil
 }
 
 // Bind implements the bind(2) linux unix.
 func (s *socketOpsCommon) Bind(t *kernel.Task, sockaddr []byte) *syserr.Error {
-	fmt.Println("Bind not implemented")
-	return syserr.ErrNotSupported
+	req := &SocketReq{
+		Id:   s.id, // sockfd
+		Size: 0,
+		Op:   OpBind,
+	}
+	// copy sockaddr to req.Data
+	copy(req.Data[:], sockaddr)
+	_, err := s.client.Request(req) // receive from SocketRsp
+	if err != nil {
+		return syserr.ErrAborted
+	}
+	fmt.Println("Request Bind Done")
+	return nil
 }
 
 // Listen implements the listen(2) linux unix.
 func (s *socketOpsCommon) Listen(t *kernel.Task, backlog int) *syserr.Error {
-	fmt.Println("Listen not implemented")
-	return syserr.ErrNotSupported
+	req := &SocketReq{
+		Id:   s.id, // sockfd
+		Size: 0,
+		Op:   OpListen,
+	}
+	enc := gob.NewEncoder(bytes.NewBuffer(req.Data[:0]))
+	err := enc.Encode(backlog)
+	if err != nil {
+		log.Fatal("encode error:", err)
+	}
+	fmt.Printf("data after encode: %d, backlog=%d\n", req.Data, backlog)
+	rsp, err := s.client.Request(req) // receive from SocketRsp
+	if err != nil {
+		return syserr.ErrAborted
+	}
+	if rsp.Result < 0 {
+		return syserr.ErrAborted
+	}
+	return nil
 }
 
 // Shutdown implements the shutdown(2) linux unix.
