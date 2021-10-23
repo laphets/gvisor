@@ -17,6 +17,8 @@ typedef enum
     OpRelease,
     OpSend,
     OpRecv,
+    OpGetSockName,
+    OpGetPeerName,
 } socket_op_t;
 
 typedef struct __attribute__((__packed__)) socket_req

@@ -2,11 +2,9 @@ package dpdk
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"log"
-	"unsafe"
 
 	"gvisor.dev/gvisor/pkg/context"
 
@@ -24,6 +22,18 @@ import (
 	"gvisor.dev/gvisor/pkg/syserr"
 	"gvisor.dev/gvisor/pkg/usermem"
 	"gvisor.dev/gvisor/pkg/waiter"
+)
+
+const (
+	sizeofInt32 = 4
+
+	// sizeofSockaddr is the size in bytes of the largest sockaddr type
+	// supported by this package.
+	sizeofSockaddr = unix.SizeofSockaddrInet6 // sizeof(sockaddr_in6) > sizeof(sockaddr_in)
+
+	// maxControlLen is the maximum size of a control message buffer used in a
+	// recvmsg or sendmsg unix.
+	maxControlLen = 1024
 )
 
 type socketOpsCommon struct {
@@ -60,53 +70,50 @@ func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool
 // length is only set if len(peer) > 0.
 func (s *socketOpsCommon) Accept(t *kernel.Task, peerRequested bool, flags int, blocking bool) (int32, linux.SockAddr, uint32, *syserr.Error) {
 
-	// fmt.Println("Accept not implemented")
+	fmt.Println("Accept not implemented")
+	// var peerAddr linux.SockAddr
+	// var peerAddrlen uint32
 
-	var peerAddr linux.SockAddrInet
-	var peerAddrlen uint32
+	// // update stack idAlloc
+	// stack := t.NetworkContext()
+	// if stack == nil {
+	// 	return 0, nil, 0, syserr.ErrAborted
+	// }
+	// if _, ok := stack.(*Stack); !ok {
+	// 	return 0, nil, 0, syserr.ErrAborted
+	// }
+	// tStack := stack.(*Stack)
+	// tStack.idAlloc += 1
+	// id := tStack.idAlloc
 
-	// update stack idAlloc
-	stack := t.NetworkContext()
-	if stack == nil {
-		return 0, nil, 0, syserr.ErrAborted
-	}
-	if _, ok := stack.(*Stack); !ok {
-		return 0, nil, 0, syserr.ErrAborted
-	}
-	tStack := stack.(*Stack)
-	tStack.idAlloc += 1
-	id := tStack.idAlloc
+	// req := &SocketReq{
+	// 	Id:   s.id, // sockfd
+	// 	Size: 0,
+	// 	Op:   OpAccept,
+	// }
 
-	req := &SocketReq{
-		Id:   s.id, // sockfd
-		Size: 0,
-		Op:   OpAccept,
-	}
+	// binary.LittleEndian.PutUint16(req.Data[:2], uint16(id)) // put id to req.Data
+	// rsp, err := s.client.Request(req)                       // receive from SocketRsp
+	// if err != nil {
+	// 	return 0, nil, 0, syserr.ErrAborted
+	// }
 
-	binary.LittleEndian.PutUint16(req.Data[:2], uint16(id)) // put id to req.Data
-	rsp, err := s.client.Request(req)                       // receive from SocketRsp
-	if err != nil {
-		return 0, nil, 0, syserr.ErrAborted
-	}
+	// peerAddrlen = uint32(rsp.Size)
 
-	split_idx := unsafe.Sizeof(linux.SockAddrInet{})
-	// peerAddrlen = binary.LittleEndian.Uint32(rsp.Data[split_idx : split_idx+4])
-	buf := bytes.NewReader(rsp.Data[split_idx : split_idx+4])
-	_ = binary.Read(buf, binary.LittleEndian, &peerAddrlen)
+	// AddrBuf := bytes.NewBuffer(rsp.Data[:])
+	// dec := gob.NewDecoder(AddrBuf)
+	// _ = dec.Decode(&peerAddr)
 
-	AddrBuf := bytes.NewBuffer(rsp.Data[:split_idx])
-	dec := gob.NewDecoder(AddrBuf)
-	_ = dec.Decode(&peerAddr)
-
-	// create a new socket
-	// stype is TCP
-	stype := unix.SOCK_STREAM & linux.SOCK_TYPE_MASK
-	_, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
-	if e != nil {
-		return 0, nil, 0, syserr.ErrAborted
-	}
-	fmt.Println("Request Accept Done")
-	return int32(id), peerAddr, peerAddrlen, nil
+	// // create a new socket
+	// // stype is TCP
+	// stype := linux.SOCK_STREAM & linux.SOCK_TYPE_MASK
+	// _, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
+	// if e != nil {
+	// 	return 0, nil, 0, syserr.ErrAborted
+	// }
+	// fmt.Println("Request Accept Done")
+	// return int32(id), peerAddr, peerAddrlen, nil
+	return 0, nil, 0, syserr.ErrAborted
 }
 
 // Bind implements the bind(2) linux unix.
@@ -171,18 +178,40 @@ func (s *socketOpsCommon) SetSockOpt(t *kernel.Task, level int, name int, opt []
 //
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
-func (s *socketOpsCommon) GetSockName(t *kernel.Task) (addr linux.SockAddr, addrLen uint32, err *syserr.Error) {
-	fmt.Println("GetSockName not implemented")
-	return nil, 0, syserr.ErrNotSupported
+func (s *socketOpsCommon) GetSockName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: 0,
+		Op:   OpGetSockName,
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil {
+		return nil, 0, syserr.ErrAborted
+	}
+	fmt.Println("Request GetSockName Done")
+	addrlen := rsp.Size
+	addr := rsp.Data[:addrlen]
+	return socket.UnmarshalSockAddr(s.family, addr), uint32(addrlen), nil
 }
 
 // GetPeerName implements the getpeername(2) linux unix.
 //
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
-func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (addr linux.SockAddr, addrLen uint32, err *syserr.Error) {
-	fmt.Println("GetPeerName not implemented")
-	return nil, 0, syserr.ErrNotSupported
+func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: 0,
+		Op:   OpGetPeerName,
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil {
+		return nil, 0, syserr.ErrAborted
+	}
+	fmt.Println("Request GetPeerName Done")
+	addrlen := rsp.Size
+	addr := rsp.Data[:addrlen]
+	return socket.UnmarshalSockAddr(s.family, addr), uint32(addrlen), nil
 }
 
 // RecvMsg implements the recvmsg(2) linux unix.
@@ -196,18 +225,44 @@ func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (addr linux.SockAddr, addr
 // msgFlags. In that case, the caller should set MSG_CTRUNC appropriately.
 //
 // If err != nil, the recv was not successful.
-func (s *socketOpsCommon) RecvMsg(t *kernel.Task, dst usermem.IOSequence, flags int, haveDeadline bool, deadline ktime.Time, senderRequested bool, controlDataLen uint64) (n int, msgFlags int, senderAddr linux.SockAddr, senderAddrLen uint32, controlMessages socket.ControlMessages, err *syserr.Error) {
-	fmt.Println("RecvMsg not implemented")
-	return 0, 0, nil, 0, socket.ControlMessages{}, syserr.ErrNotSupported
+func (s *socketOpsCommon) RecvMsg(t *kernel.Task, dst usermem.IOSequence, flags int, haveDeadline bool, deadline ktime.Time, senderRequested bool, controlDataLen uint64) (int, int, linux.SockAddr, uint32, socket.ControlMessages, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: int16(dst.NumBytes()),
+		Op:   OpRecv,
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil || rsp.Result < 0 {
+		return 0, 0, nil, 0, socket.ControlMessages{}, syserr.ErrAborted
+	}
+
+	if n, err := dst.CopyOut(t, rsp.Data[:rsp.Size]); err != nil || n != int(rsp.Size) {
+		return 0, 0, nil, 0, socket.ControlMessages{}, syserr.ErrAborted
+	}
+
+	fmt.Println("Request RecvMsg Done")
+	return int(rsp.Size), 0, nil, 0, socket.ControlMessages{}, nil
 }
 
 // SendMsg implements the sendmsg(2) linux unix. SendMsg does not take
 // ownership of the ControlMessage on error.
 //
 // If n > 0, err will either be nil or an error from t.Block.
-func (s *socketOpsCommon) SendMsg(t *kernel.Task, src usermem.IOSequence, to []byte, flags int, haveDeadline bool, deadline ktime.Time, controlMessages socket.ControlMessages) (n int, err *syserr.Error) {
-	fmt.Println("SendMsg not implemented")
-	return 0, syserr.ErrNotSupported
+func (s *socketOpsCommon) SendMsg(t *kernel.Task, src usermem.IOSequence, to []byte, flags int, haveDeadline bool, deadline ktime.Time, controlMessages socket.ControlMessages) (int, *syserr.Error) {
+	req := &SocketReq{
+		Id:   s.id,
+		Size: int16(src.NumBytes()),
+		Op:   OpSend,
+	}
+	if n, err := src.CopyIn(t, req.Data[:]); err != nil || n != int(src.NumBytes()) {
+		return 0, syserr.ErrNotSupported
+	}
+	rsp, err := s.client.Request(req)
+	if err != nil {
+		return 0, syserr.ErrAborted
+	}
+	fmt.Println("Request SendMsg Done")
+	return int(rsp.Result), nil
 }
 
 // SetRecvTimeout sets the timeout (in ns) for recv operations. Zero means
@@ -285,7 +340,13 @@ func (s *socketOpsCommon) Readiness(mask waiter.EventMask) waiter.EventMask {
 
 // Release implements fs.FileOperations.Release.
 func (s *socketOpsCommon) Release(ctx context.Context) {
-	fmt.Println("Release not implemented")
+	req := &SocketReq{
+		Id:   s.id,
+		Size: 0,
+		Op:   OpRelease,
+	}
+	s.client.Request(req)
+	fmt.Println("Request Release Done")
 }
 
 type socketProvider struct {

@@ -33,7 +33,11 @@ void dump_socket_rsp(socket_rsp_t *rsp)
     char ch[200];
     memset(ch, 0, sizeof(ch));
     memcpy(ch, rsp->data, rsp->size);
-    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: %s\n", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result, ch);
+    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: ", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result);
+    for (int i = 0; i < rsp->size; i++) {
+        printf("%d ", rsp->data[i]);
+    }
+    printf("\n");
 }
 
 #define SOCK_ADDR "/tmp/gvisor.sock"
@@ -42,8 +46,13 @@ int16_t socket_fd_map[65536];
 
 int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     int sockfd, ret;
+
     struct sockaddr_in serv_addr, peer_addr;
+    struct sockaddr_in sa;
+
     socklen_t peer_addr_size;
+    int sa_len;
+
     rsp->fd = req->fd;
     rsp->op = req->op;
     switch (req->op)
@@ -64,11 +73,12 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     case OpAccept:
         printf("accept\n");
         sockfd = accept(socket_fd_map[req->fd], (struct sockaddr *restrict)&peer_addr, &peer_addr_size);
-        socket_fd_map[int(req->data[:2])] = sockfd;
+        int reserved_fd = *((int *)req->data);
+        socket_fd_map[reserved_fd] = sockfd;
         // rsp->data[:sizeof(sockaddr_in)] = peer_addr;
         // rsp->data [sizeof(sockaddr_in):] = peer_addr_size;
-        memcpy(rsp->data, peer_addr, sizeof(sockaddr_in));
-        memcpy(rsp->data + sizeof(sockaddr_in), peer_addr_size, sizeof(socklen_t));
+        memcpy(rsp->data, &peer_addr, sizeof(peer_addr));
+        rsp->size = peer_addr_size;
         printf("accept done, new socket %d\n", sockfd);
         break;
 
@@ -86,7 +96,26 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         printf("listen done %d\n", ret);
         rsp->result = ret;
         break;
-    case OpSend : 
+
+    case OpGetSockName:
+        rsp->result = getsockname(socket_fd_map[req->fd], &sa, &sa_len);
+        memcpy(rsp->data, &sa, sa_len);
+        rsp->size = sa_len;
+        break;
+
+    case OpGetPeerName:
+        rsp->result = getpeername(socket_fd_map[req->fd], &sa, &sa_len);
+        memcpy(rsp->data, &sa, sa_len);
+        rsp->size = sa_len;
+        break;
+
+    case OpSend:
+        rsp->result = send(socket_fd_map[req->fd], req->data, req->size, 0);
+        break;
+
+    case OpRecv:
+        rsp->result = recv(socket_fd_map[req->fd], rsp->data, req->size, 0);
+        rsp->size = rsp->result;
         break;
 
     case OpRelease:
