@@ -47,11 +47,14 @@ int16_t socket_fd_map[65536];
 int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     int sockfd, ret;
 
-    struct sockaddr_in serv_addr, peer_addr;
+    struct sockaddr_in serv_addr;
+    struct sockaddr_storage peer_addr;
     struct sockaddr_in sa;
 
     socklen_t peer_addr_size;
     int sa_len;
+    int level, name, optlen, backlog;
+    void *opt;
 
     rsp->fd = req->fd;
     rsp->op = req->op;
@@ -72,26 +75,31 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
 
     case OpAccept:
         printf("accept\n");
-        sockfd = accept(socket_fd_map[req->fd], (struct sockaddr *restrict)&peer_addr, &peer_addr_size);
+        peer_addr_size = sizeof peer_addr;
+        sockfd = accept(socket_fd_map[req->fd], &peer_addr, &peer_addr_size);
         int reserved_fd = *((int *)req->data);
         socket_fd_map[reserved_fd] = sockfd;
+        printf("map serverfd %d to gvisor %d\n", sockfd, reserved_fd);
         // rsp->data[:sizeof(sockaddr_in)] = peer_addr;
         // rsp->data [sizeof(sockaddr_in):] = peer_addr_size;
-        memcpy(rsp->data, &peer_addr, sizeof(peer_addr));
+        memcpy(rsp->data, &peer_addr, peer_addr_size);
         rsp->size = peer_addr_size;
-        printf("accept done, new socket %d\n", sockfd);
+        printf("peeraddrlen %d\n", rsp->size);
         break;
 
     case OpBind:
         printf("bind\n");
-        ret = bind(socket_fd_map[req->fd], (struct sockaddr *)req->data, sizeof(req->data));
+        // sa = *(struct sockaddr_in *)req->data;
+        // printf("Bind sockaddr: family=%u addr=%u, port=%d\n", sa.sin_family, sa.sin_addr, sa.sin_port);
+        ret = bind(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
         printf("bind done %d\n", ret);
         rsp->result = ret;
         break;
         
     case OpListen:
         printf("listen\n");
-        int backlog = *((int *)req->data); // read int backlog from req->data
+        backlog = *((int32_t *)req->data); // read int backlog from req->data
+        printf("listen backlog=%d\n",backlog);
         ret = listen(socket_fd_map[req->fd], backlog);
         printf("listen done %d\n", ret);
         rsp->result = ret;
@@ -120,6 +128,16 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
 
     case OpRelease:
         rsp->result = close(socket_fd_map[req->fd]);
+        break;
+
+    case OpSetSockopt:
+        level = *((int32_t *)req->data);
+        name = *((int32_t *) (req->data + 4));
+        optlen = *((int32_t *) (req->data + 8));
+        opt = req->data + 12;
+        printf("setsockopt level=%d, name=%d, optlen=%d\n", level, name, optlen);
+        rsp->result = setsockopt(socket_fd_map[req->fd], level, name, opt, optlen);
+        printf("setsockopt done %d\n", rsp->result);
         break;
     }
     return 0;

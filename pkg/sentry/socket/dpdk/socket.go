@@ -2,7 +2,7 @@ package dpdk
 
 import (
 	"bytes"
-	"encoding/gob"
+	"encoding/binary"
 	"fmt"
 	"log"
 
@@ -56,8 +56,12 @@ func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool
 		Op:   OpConnect,
 	}
 	copy(req.Data[:], sockaddr)
-	_, err := s.client.Request(req)
+	rsp, err := s.client.Request(req)
 	if err != nil {
+		return syserr.ErrAborted
+	}
+	if rsp.Result < 0 {
+		fmt.Println("Request Connect Error")
 		return syserr.ErrAborted
 	}
 	fmt.Println("Request Connect Done")
@@ -70,63 +74,60 @@ func (s *socketOpsCommon) Connect(t *kernel.Task, sockaddr []byte, blocking bool
 // length is only set if len(peer) > 0.
 func (s *socketOpsCommon) Accept(t *kernel.Task, peerRequested bool, flags int, blocking bool) (int32, linux.SockAddr, uint32, *syserr.Error) {
 
-	fmt.Println("Accept not implemented")
-	// var peerAddr linux.SockAddr
-	// var peerAddrlen uint32
+	// update stack idAlloc
+	stack := t.NetworkContext()
+	tStack := stack.(*Stack)
+	tStack.idAlloc += 1
+	id := tStack.idAlloc
 
-	// // update stack idAlloc
-	// stack := t.NetworkContext()
-	// if stack == nil {
-	// 	return 0, nil, 0, syserr.ErrAborted
-	// }
-	// if _, ok := stack.(*Stack); !ok {
-	// 	return 0, nil, 0, syserr.ErrAborted
-	// }
-	// tStack := stack.(*Stack)
-	// tStack.idAlloc += 1
-	// id := tStack.idAlloc
+	req := &SocketReq{
+		Id:   s.id, // sockfd
+		Size: 0,
+		Op:   OpAccept,
+	}
 
-	// req := &SocketReq{
-	// 	Id:   s.id, // sockfd
-	// 	Size: 0,
-	// 	Op:   OpAccept,
-	// }
+	fmt.Printf("Accept newfd %d\n", id)
+	buf := bytes.NewBuffer(req.Data[:0])
+	err := binary.Write(buf, binary.LittleEndian, int32(id))
+	if err != nil {
+		log.Fatal("encode error:", err)
+	}
+	fmt.Println("Log: send accept request...\n")
+	rsp, err := s.client.Request(req) // receive from SocketRsp
+	if err != nil {
+		return 0, nil, 0, syserr.ErrAborted
+	}
 
-	// binary.LittleEndian.PutUint16(req.Data[:2], uint16(id)) // put id to req.Data
-	// rsp, err := s.client.Request(req)                       // receive from SocketRsp
-	// if err != nil {
-	// 	return 0, nil, 0, syserr.ErrAborted
-	// }
+	peerAddrlen := rsp.Size
+	peerAddr := rsp.Data[:peerAddrlen]
+	fmt.Printf("peerAddrLen %d\n", peerAddrlen)
+	fmt.Println("PeerAddr", peerAddr)
 
-	// peerAddrlen = uint32(rsp.Size)
-
-	// AddrBuf := bytes.NewBuffer(rsp.Data[:])
-	// dec := gob.NewDecoder(AddrBuf)
-	// _ = dec.Decode(&peerAddr)
-
-	// // create a new socket
-	// // stype is TCP
-	// stype := linux.SOCK_STREAM & linux.SOCK_TYPE_MASK
-	// _, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
-	// if e != nil {
-	// 	return 0, nil, 0, syserr.ErrAborted
-	// }
-	// fmt.Println("Request Accept Done")
-	// return int32(id), peerAddr, peerAddrlen, nil
-	return 0, nil, 0, syserr.ErrAborted
+	// create a new TCP socket
+	stype := linux.SOCK_STREAM & linux.SOCK_TYPE_MASK
+	_, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
+	if e != nil {
+		return 0, nil, 0, syserr.ErrAborted
+	}
+	fmt.Println("Request Accept Done")
+	return int32(id), socket.UnmarshalSockAddr(s.family, peerAddr), uint32(peerAddrlen), nil
 }
 
 // Bind implements the bind(2) linux unix.
 func (s *socketOpsCommon) Bind(t *kernel.Task, sockaddr []byte) *syserr.Error {
 	req := &SocketReq{
 		Id:   s.id, // sockfd
-		Size: 0,
+		Size: int16(len(sockaddr)),
 		Op:   OpBind,
 	}
 	// copy sockaddr to req.Data
 	copy(req.Data[:], sockaddr)
-	_, err := s.client.Request(req) // receive from SocketRsp
+	rsp, err := s.client.Request(req) // receive from SocketRsp
 	if err != nil {
+		return syserr.ErrAborted
+	}
+	if rsp.Result < 0 {
+		fmt.Println("Request Bind Error")
 		return syserr.ErrAborted
 	}
 	fmt.Println("Request Bind Done")
@@ -140,12 +141,13 @@ func (s *socketOpsCommon) Listen(t *kernel.Task, backlog int) *syserr.Error {
 		Size: 0,
 		Op:   OpListen,
 	}
-	enc := gob.NewEncoder(bytes.NewBuffer(req.Data[:0]))
-	err := enc.Encode(backlog)
+
+	buf := bytes.NewBuffer(req.Data[:0])
+	err := binary.Write(buf, binary.LittleEndian, int32(backlog))
 	if err != nil {
 		log.Fatal("encode error:", err)
 	}
-	fmt.Printf("data after encode: %d, backlog=%d\n", req.Data, backlog)
+	fmt.Printf("In Listen: backlog=%d\n", backlog)
 	rsp, err := s.client.Request(req) // receive from SocketRsp
 	if err != nil {
 		return syserr.ErrAborted
@@ -153,6 +155,7 @@ func (s *socketOpsCommon) Listen(t *kernel.Task, backlog int) *syserr.Error {
 	if rsp.Result < 0 {
 		return syserr.ErrAborted
 	}
+	fmt.Println("Request Listen Done")
 	return nil
 }
 
@@ -164,14 +167,40 @@ func (s *socketOpsCommon) Shutdown(t *kernel.Task, how int) *syserr.Error {
 
 // GetSockOpt implements the getsockopt(2) linux unix.
 func (s *socketOpsCommon) GetSockOpt(t *kernel.Task, level int, name int, outPtr hostarch.Addr, outLen int) (marshal.Marshallable, *syserr.Error) {
+
 	fmt.Println("GetSockOpt not implemented")
 	return nil, syserr.ErrNotSupported
 }
 
 // SetSockOpt implements the setsockopt(2) linux unix.
 func (s *socketOpsCommon) SetSockOpt(t *kernel.Task, level int, name int, opt []byte) *syserr.Error {
-	fmt.Println("SetSockOpt not implemented")
-	return syserr.ErrNotSupported
+
+	// copy level, name, opt into req.Data
+	req := &SocketReq{
+		Id:   s.id, // sockfd
+		Size: 0,
+		Op:   OpSetSockopt,
+	}
+	buf := bytes.NewBuffer(req.Data[:0])
+	err := binary.Write(buf, binary.LittleEndian, int32(level))
+	err = binary.Write(buf, binary.LittleEndian, int32(name))
+	err = binary.Write(buf, binary.LittleEndian, int32(binary.Size(opt)))
+	if err != nil {
+		fmt.Print("Error", err)
+	}
+	copy(req.Data[12:], opt) //SocketReqDataLen-optlen
+	fmt.Printf("level=%d, name=%d, optlen=%d\n", level, name, binary.Size(opt))
+	// fmt.Print("data after copy, and opt", req.Data, opt)
+	rsp, err := s.client.Request(req) // receive from SocketRsp
+	if err != nil {
+		return syserr.ErrAborted
+	}
+	if rsp.Result < 0 {
+		fmt.Println("Request SetSockOpt Error")
+		return syserr.ErrAborted
+	}
+	fmt.Println("Request SetSockOpt Done")
+	return nil
 }
 
 // GetSockName implements the getsockname(2) linux unix.
@@ -179,6 +208,7 @@ func (s *socketOpsCommon) SetSockOpt(t *kernel.Task, level int, name int, opt []
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
 func (s *socketOpsCommon) GetSockName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
+	fmt.Println("Request GetSockName")
 	req := &SocketReq{
 		Id:   s.id,
 		Size: 0,
@@ -199,6 +229,7 @@ func (s *socketOpsCommon) GetSockName(t *kernel.Task) (linux.SockAddr, uint32, *
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
 func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
+	fmt.Println("Request GetPeerName s.id", s.id)
 	req := &SocketReq{
 		Id:   s.id,
 		Size: 0,
@@ -268,26 +299,30 @@ func (s *socketOpsCommon) SendMsg(t *kernel.Task, src usermem.IOSequence, to []b
 // SetRecvTimeout sets the timeout (in ns) for recv operations. Zero means
 // no timeout, and negative means DONTWAIT.
 func (s *socketOpsCommon) SetRecvTimeout(nanoseconds int64) {
-	fmt.Println("SetRecvTimeout not implemented")
+	s.SendReceiveTimeout.SetRecvTimeout(nanoseconds)
+	fmt.Println("SetRecvTimeout")
 }
 
 // RecvTimeout gets the current timeout (in ns) for recv operations. Zero
 // means no timeout, and negative means DONTWAIT.
 func (s *socketOpsCommon) RecvTimeout() int64 {
-	fmt.Println("RecvTimeout not implemented")
+	s.SendReceiveTimeout.RecvTimeout()
+	fmt.Println("RecvTimeout")
 	return 0
 }
 
 // SetSendTimeout sets the timeout (in ns) for send operations. Zero means
 // no timeout, and negative means DONTWAIT.
 func (s *socketOpsCommon) SetSendTimeout(nanoseconds int64) {
-	fmt.Println("SetSendTimeout not implemented")
+	s.SendReceiveTimeout.SetSendTimeout(nanoseconds)
+	fmt.Println("SetSendTimeout")
 }
 
 // SendTimeout gets the current timeout (in ns) for send operations. Zero
 // means no timeout, and negative means DONTWAIT.
 func (s *socketOpsCommon) SendTimeout() int64 {
-	fmt.Println("SendTimeout not implemented")
+	s.SendReceiveTimeout.SendTimeout()
+	fmt.Println("SendTimeout")
 	return 0
 }
 

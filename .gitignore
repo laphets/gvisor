@@ -11,3 +11,4 @@ bazel-gvisor
 Vagrantfile
 .idea/
 .vscode/
+.DS_Store
