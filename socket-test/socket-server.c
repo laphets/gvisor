@@ -21,6 +21,54 @@
 
 #include "socket.h"
 
+#ifdef FSTACK
+#include "ff_socket.h"
+#include "ff_config.h"
+#include "ff_api.h"
+#include "ff_epoll.h"
+
+#define ss_fcntl ff_fcntl
+#define ss_socket ff_socket
+#define ss_bind ff_bind
+#define ss_listen ff_listen
+#define ss_connect ff_connect
+#define ss_accept ff_accept
+#define ss_close ff_close
+#define ss_shutdown ff_shutdown
+#define ss_getpeername ff_getpeername
+#define ss_getsockname ff_getsockname
+#define ss_getsockopt ff_getsockopt
+#define ss_setsockopt ff_setsockopt
+#define ss_write ff_write
+#define ss_read ff_read
+#define ss_send ff_send
+#define ss_recv ff_recv
+#define ss_epoll_ctl ff_epoll_ctl
+#define ss_epoll_wait ff_epoll_wait
+#define ss_epoll_create ff_epoll_create
+
+#else
+#define ss_fcntl fcntl
+#define ss_socket socket
+#define ss_bind bind
+#define ss_listen listen
+#define ss_connect connect
+#define ss_accept accept
+#define ss_close close
+#define ss_shutdown shutdown
+#define ss_getpeername getpeername
+#define ss_getsockname getsockname
+#define ss_getsockopt getsockopt
+#define ss_setsockopt setsockopt
+#define ss_write write
+#define ss_read read
+#define ss_send send
+#define ss_recv recv
+#define ss_epoll_ctl epoll_ctl
+#define ss_epoll_wait epoll_wait
+#define ss_epoll_create epoll_create
+#endif
+
 void dump_socket_req(socket_req_t* req) {
     char ch[200];
     memset(ch, 0, sizeof(ch));
@@ -61,14 +109,14 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     switch (req->op)
     {
     case OpCreate:
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        sockfd = ss_socket(AF_INET, SOCK_STREAM, 0);
         socket_fd_map[req->fd] = sockfd;
         rsp->result = 0;
         break;
 
     case OpConnect:
         printf("connect\n");
-        ret = connect(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
+        ret = ss_connect(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
         printf("connect done %d\n", ret);
         rsp->result = ret;
         break;
@@ -76,7 +124,7 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
     case OpAccept:
         printf("accept\n");
         peer_addr_size = sizeof peer_addr;
-        sockfd = accept(socket_fd_map[req->fd], &peer_addr, &peer_addr_size);
+        sockfd = ss_accept(socket_fd_map[req->fd], &peer_addr, &peer_addr_size);
         int reserved_fd = *((int *)req->data);
         socket_fd_map[reserved_fd] = sockfd;
         printf("map serverfd %d to gvisor %d\n", sockfd, reserved_fd);
@@ -91,7 +139,7 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         printf("bind\n");
         // sa = *(struct sockaddr_in *)req->data;
         // printf("Bind sockaddr: family=%u addr=%u, port=%d\n", sa.sin_family, sa.sin_addr, sa.sin_port);
-        ret = bind(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
+        ret = ss_bind(socket_fd_map[req->fd], (struct sockaddr *)req->data, req->size);
         printf("bind done %d\n", ret);
         rsp->result = ret;
         break;
@@ -100,34 +148,34 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         printf("listen\n");
         backlog = *((int32_t *)req->data); // read int backlog from req->data
         printf("listen backlog=%d\n",backlog);
-        ret = listen(socket_fd_map[req->fd], backlog);
+        ret = ss_listen(socket_fd_map[req->fd], backlog);
         printf("listen done %d\n", ret);
         rsp->result = ret;
         break;
 
     case OpGetSockName:
-        rsp->result = getsockname(socket_fd_map[req->fd], &sa, &sa_len);
+        rsp->result = ss_getsockname(socket_fd_map[req->fd], &sa, &sa_len);
         memcpy(rsp->data, &sa, sa_len);
         rsp->size = sa_len;
         break;
 
     case OpGetPeerName:
-        rsp->result = getpeername(socket_fd_map[req->fd], &sa, &sa_len);
+        rsp->result = ss_getpeername(socket_fd_map[req->fd], &sa, &sa_len);
         memcpy(rsp->data, &sa, sa_len);
         rsp->size = sa_len;
         break;
 
     case OpSend:
-        rsp->result = send(socket_fd_map[req->fd], req->data, req->size, 0);
+        rsp->result = ss_send(socket_fd_map[req->fd], req->data, req->size, 0);
         break;
 
     case OpRecv:
-        rsp->result = recv(socket_fd_map[req->fd], rsp->data, req->size, 0);
+        rsp->result = ss_recv(socket_fd_map[req->fd], rsp->data, req->size, 0);
         rsp->size = rsp->result;
         break;
 
     case OpRelease:
-        rsp->result = close(socket_fd_map[req->fd]);
+        rsp->result = ss_close(socket_fd_map[req->fd]);
         break;
 
     case OpSetSockopt:
@@ -136,7 +184,7 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         optlen = *((int32_t *) (req->data + 8));
         opt = req->data + 12;
         printf("setsockopt level=%d, name=%d, optlen=%d\n", level, name, optlen);
-        rsp->result = setsockopt(socket_fd_map[req->fd], level, name, opt, optlen);
+        rsp->result = ss_setsockopt(socket_fd_map[req->fd], level, name, opt, optlen);
         printf("setsockopt done %d\n", rsp->result);
         break;
     }
