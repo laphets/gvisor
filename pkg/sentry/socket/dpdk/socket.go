@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
+	"gvisor.dev/gvisor/pkg/fdnotifier"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/marshal"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
@@ -86,7 +87,7 @@ func (s *socketOpsCommon) Accept(t *kernel.Task, peerRequested bool, flags int, 
 		Op:   OpAccept,
 	}
 
-	fmt.Printf("Accept newfd %d\n", id)
+	fmt.Printf("current s.id=%d Accept newfd %d\n", s.id, id)
 	buf := bytes.NewBuffer(req.Data[:0])
 	err := binary.Write(buf, binary.LittleEndian, int32(id))
 	if err != nil {
@@ -105,12 +106,18 @@ func (s *socketOpsCommon) Accept(t *kernel.Task, peerRequested bool, flags int, 
 
 	// create a new TCP socket
 	stype := linux.SOCK_STREAM & linux.SOCK_TYPE_MASK
-	_, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
+	f, e := newSocketFile(t, unix.AF_INET, stype, unix.IPPROTO_TCP, id, s.client, unix.SOCK_STREAM&unix.SOCK_NONBLOCK != 0)
 	if e != nil {
 		return 0, nil, 0, syserr.ErrAborted
 	}
+
+	fd, _ := t.NewFDFrom(0, f, kernel.FDFlags{
+		CloseOnExec: flags&unix.SOCK_CLOEXEC != 0,
+	})
+	t.Kernel().RecordSocket(f)
+
 	fmt.Println("Request Accept Done")
-	return int32(id), socket.UnmarshalSockAddr(s.family, peerAddr), uint32(peerAddrlen), nil
+	return fd, socket.UnmarshalSockAddr(s.family, peerAddr), uint32(peerAddrlen), nil
 }
 
 // Bind implements the bind(2) linux unix.
@@ -178,7 +185,7 @@ func (s *socketOpsCommon) SetSockOpt(t *kernel.Task, level int, name int, opt []
 	// copy level, name, opt into req.Data
 	req := &SocketReq{
 		Id:   s.id, // sockfd
-		Size: 0,
+		Size: 12,
 		Op:   OpSetSockopt,
 	}
 	buf := bytes.NewBuffer(req.Data[:0])
@@ -208,7 +215,7 @@ func (s *socketOpsCommon) SetSockOpt(t *kernel.Task, level int, name int, opt []
 // addrLen is the address length to be returned to the application, not
 // necessarily the actual length of the address.
 func (s *socketOpsCommon) GetSockName(t *kernel.Task) (linux.SockAddr, uint32, *syserr.Error) {
-	fmt.Println("Request GetSockName")
+	fmt.Println("Request GetSockName, s.id", s.id)
 	req := &SocketReq{
 		Id:   s.id,
 		Size: 0,
@@ -218,9 +225,11 @@ func (s *socketOpsCommon) GetSockName(t *kernel.Task) (linux.SockAddr, uint32, *
 	if err != nil {
 		return nil, 0, syserr.ErrAborted
 	}
-	fmt.Println("Request GetSockName Done")
 	addrlen := rsp.Size
 	addr := rsp.Data[:addrlen]
+	fmt.Printf("addrlen %d\n", addrlen)
+	fmt.Println("addr", addr)
+	fmt.Println("Request GetSockName Done")
 	return socket.UnmarshalSockAddr(s.family, addr), uint32(addrlen), nil
 }
 
@@ -239,9 +248,11 @@ func (s *socketOpsCommon) GetPeerName(t *kernel.Task) (linux.SockAddr, uint32, *
 	if err != nil {
 		return nil, 0, syserr.ErrAborted
 	}
-	fmt.Println("Request GetPeerName Done")
 	addrlen := rsp.Size
 	addr := rsp.Data[:addrlen]
+	fmt.Printf("addrlen %d\n", addrlen)
+	fmt.Println("addr", addr)
+	fmt.Println("Request GetPeerName Done")
 	return socket.UnmarshalSockAddr(s.family, addr), uint32(addrlen), nil
 }
 
@@ -300,14 +311,14 @@ func (s *socketOpsCommon) SendMsg(t *kernel.Task, src usermem.IOSequence, to []b
 // no timeout, and negative means DONTWAIT.
 func (s *socketOpsCommon) SetRecvTimeout(nanoseconds int64) {
 	s.SendReceiveTimeout.SetRecvTimeout(nanoseconds)
-	fmt.Println("SetRecvTimeout")
+	fmt.Println("SetRecvTimeout Done")
 }
 
 // RecvTimeout gets the current timeout (in ns) for recv operations. Zero
 // means no timeout, and negative means DONTWAIT.
 func (s *socketOpsCommon) RecvTimeout() int64 {
 	s.SendReceiveTimeout.RecvTimeout()
-	fmt.Println("RecvTimeout")
+	fmt.Println("RecvTimeout Done")
 	return 0
 }
 
@@ -341,11 +352,15 @@ func (s *socketOpsCommon) Type() (family int, skType linux.SockType, protocol in
 
 // EventRegister implements waiter.Waitable.EventRegister.
 func (s *socketOpsCommon) EventRegister(e *waiter.Entry, mask waiter.EventMask) {
-	fmt.Println("EventRegister not implemented")
+	// s.queue.EventRegister(e, mask)
+	// _ = fdnotifier.UpdateFD(int32(s.id))
+	fmt.Println("EventRegister Done")
 }
 
 // EventUnregister implements waiter.Waitable.EventUnregister.
 func (s *socketOpsCommon) EventUnregister(e *waiter.Entry) {
+	// s.queue.EventUnregister(e)
+	// _ = fdnotifier.UpdateFD(int32(s.id))
 	fmt.Println("EventUnregister not implemented")
 }
 
@@ -369,8 +384,8 @@ func (s *socketOperations) Write(ctx context.Context, _ *fs.File, src usermem.IO
 
 // Readiness implements waiter.Waitable.Readiness.
 func (s *socketOpsCommon) Readiness(mask waiter.EventMask) waiter.EventMask {
-	fmt.Println("Readiness not implemented")
-	return 0
+	fmt.Println("Readiness Done")
+	return fdnotifier.NonBlockingPoll(int32(s.id), mask)
 }
 
 // Release implements fs.FileOperations.Release.
@@ -425,6 +440,7 @@ func newSocketFile(ctx context.Context, family int, stype linux.SockType, protoc
 // Socket implements socket.Provider.Socket.
 func (p *socketProvider) Socket(t *kernel.Task, stypeflags linux.SockType, protocol int) (*fs.File, *syserr.Error) {
 	// Check that we are using the dpdk network stack.
+	fmt.Println("gvisor Socket Create starts")
 	stack := t.NetworkContext()
 	if stack == nil {
 		return nil, nil
@@ -457,7 +473,7 @@ func (p *socketProvider) Socket(t *kernel.Task, stypeflags linux.SockType, proto
 	default:
 		return nil, nil
 	}
-
+	fmt.Println("new socket from dpdk")
 	req := &SocketReq{
 		Id:   id,
 		Size: 0,

@@ -69,20 +69,25 @@
 #define ss_epoll_create epoll_create
 #endif
 
-void dump_socket_req(socket_req_t* req) {
+void dump_socket_req(socket_req_t *req)
+{
     char ch[200];
-    memset(ch, 0, sizeof(ch));
-    memcpy(ch, req->data, req->size);
-    printf("[socket_req] sizeof: %d, fd: %d, size: %d, op: %d, data: %s\n", sizeof(socket_req_t), req->fd, req->size, req->op, ch);
+    if (req->op != OpRecv)
+    {
+        memset(ch, 0, sizeof(ch));
+        memcpy(ch, req->data, req->size);
+    }
+    printf("[socket_req] sizeof: %d, fd: %d, size: %d, op: %d\n", sizeof(socket_req_t), req->fd, req->size, req->op);
 }
 
 void dump_socket_rsp(socket_rsp_t *rsp)
 {
     char ch[200];
+    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: ", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result);
     memset(ch, 0, sizeof(ch));
     memcpy(ch, rsp->data, rsp->size);
-    printf("[socket_rsp] sizeof: %d, fd: %d, size: %d, op: %d, result: %d, data: ", sizeof(socket_rsp_t), rsp->fd, rsp->size, rsp->op, rsp->result);
-    for (int i = 0; i < rsp->size; i++) {
+    for (int i = 0; i < rsp->size; i++)
+    {
         printf("%d ", rsp->data[i]);
     }
     printf("\n");
@@ -128,11 +133,10 @@ int socket_handler(socket_req_t *req, socket_rsp_t* rsp) {
         int reserved_fd = *((int *)req->data);
         socket_fd_map[reserved_fd] = sockfd;
         printf("map serverfd %d to gvisor %d\n", sockfd, reserved_fd);
-        // rsp->data[:sizeof(sockaddr_in)] = peer_addr;
-        // rsp->data [sizeof(sockaddr_in):] = peer_addr_size;
         memcpy(rsp->data, &peer_addr, peer_addr_size);
         rsp->size = peer_addr_size;
         printf("peeraddrlen %d\n", rsp->size);
+        printf("\n");
         break;
 
     case OpBind:

@@ -58,6 +58,8 @@ type UdsClient struct {
 }
 
 func (c *UdsClient) Request(req *SocketReq) (*SocketRsp, error) {
+	fmt.Printf("gvisor request call: id=%d, op=%d \n", req.Id, req.Op)
+
 	if _, ok := c.chanMap[req.Id]; !ok {
 		c.chanMap[req.Id] = make(chan *SocketRsp, 10)
 	}
